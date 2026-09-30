@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MariForge</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="importmap">
+    { "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    } }
+  </script>
+</head>
+<body>
+  <header>
+    <h1>MariForge</h1>
+    <span class="sub">physics-based RC hull design, exported as print-ready CAD</span>
+  </header>
+  <main>
+    <aside id="request">
+      <h2>Request</h2>
+      <label>Hull type
+        <select id="hull_type"><option value="displacement_monohull">Displacement monohull</option></select>
+      </label>
+      <label>Mission
+        <select id="mission"><option value="scale_cruiser">Scale cruiser</option></select>
+      </label>
+      <fieldset>
+        <legend>Size box (mm)</legend>
+        <label>Length <input id="length_mm" type="number" value="800" min="350" max="1600"></label>
+        <label>Beam <input id="beam_mm" type="number" value="250" min="80" max="600"></label>
+        <label>Height <input id="height_mm" type="number" value="260" min="80" max="600"></label>
+      </fieldset>
+      <label>Cruise speed (m/s) <input id="cruise_speed_mps" type="number" value="0.9" step="0.05"></label>
+      <label>Endurance (min) <input id="endurance_min" type="number" value="30"></label>
+      <label>Print bed (mm) <input id="bed_mm" type="number" value="250"></label>
+      <button id="go">Generate five hulls</button>
+      <p id="msg" class="muted"></p>
+    </aside>
+
+    <section id="stage">
+      <div id="viewer"></div>
+      <div id="viewbar">
+        <label><input type="checkbox" id="show_wl" checked> waterline</label>
+        <label>heel <input type="range" id="heel" min="0" max="60" value="0"> <span id="heel_v">0°</span></label>
+        <span id="cad_state" class="muted"></span>
+      </div>
+      <div id="gallery"></div>
+    </section>
+
+    <aside id="spec">
+      <h2 id="spec_title">Spec sheet</h2>
+      <div id="spec_body" class="muted">Generate to see a design.</div>
+    </aside>
+  </main>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
