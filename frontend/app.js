@@ -61,7 +61,14 @@ function frame(d) {
 async function show(d) {
   boat.clear();
   frame(d);
-  boat.add(await loadStl(`/api/preview/${d.id}/envelope.stl`, MATS.envelope));
+  $("cad_state").textContent = "loading hull preview (the first one after startup can take a minute)...";
+  try {
+    boat.add(await loadStl(`/api/preview/${d.id}/envelope.stl`, MATS.envelope));
+  } catch (e) {
+    const r = await fetch(`/api/preview/${d.id}/envelope.stl`).catch(() => null);
+    const why = r && !r.ok ? await r.text() : String(e);
+    $("cad_state").textContent = "3D preview failed: " + why.slice(0, 300);
+  }
   applyHeel();
   watchCad(d);
 }

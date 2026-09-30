@@ -149,7 +149,11 @@ def preview_envelope(design_id: str):
     path = EXPORTS / design_id / "envelope.stl"
     if not path.exists():
         path.parent.mkdir(exist_ok=True)
-        export_stl(envelope(HullParams(**_DESIGNS[design_id]["params"])), path, 0.3, 0.3)
+        try:
+            with _OCC:
+                export_stl(envelope(HullParams(**_DESIGNS[design_id]["params"])), path, 0.3, 0.3)
+        except Exception as e:   # surface the real cause in the viewer, not a silent blank
+            raise HTTPException(500, f"CAD preview failed: {e!r}")
     return FileResponse(path, media_type="model/stl")
 
 
