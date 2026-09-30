@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { STLLoader } from "three/addons/loaders/STLLoader.js";
+import { toCreasedNormals } from "three/addons/utils/BufferGeometryUtils.js";
 
 const $ = (id) => document.getElementById(id);
 const fmt = (v, d = 0) => Number(v).toFixed(d);
@@ -46,7 +47,9 @@ new ResizeObserver(resize).observe(host);
 
 const loader = new STLLoader();
 function loadStl(url, mat) {
-  return new Promise((ok, bad) => loader.load(url, (g) => { g.computeVertexNormals(); ok(new THREE.Mesh(g, mat)); }, undefined, bad));
+  // STL has one normal per triangle, which renders every facet. Smooth across
+  // gentle angles, keep real edges (deck edge, coaming, transom) crisp.
+  return new Promise((ok, bad) => loader.load(url, (g) => ok(new THREE.Mesh(toCreasedNormals(g, THREE.MathUtils.degToRad(30)), mat)), undefined, bad));
 }
 
 function frame(d) {

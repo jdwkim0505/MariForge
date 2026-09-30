@@ -43,7 +43,7 @@ def _build(design_id: str) -> dict:
     base.mkdir(exist_ok=True)
     with _OCC:
         for k in ("hull", "hatch_lid", "rudder"):
-            export_stl(parts[k], base / f"{k}.stl", 0.2, 0.3)
+            export_stl(parts[k], base / f"{k}.stl", 0.1, 0.1)   # fine enough that the viewer shows curves, not facets
     d["cad"] = out
     _PARTS[design_id] = parts
     return out
@@ -151,7 +151,7 @@ def preview_envelope(design_id: str):
         path.parent.mkdir(exist_ok=True)
         try:
             with _OCC:
-                export_stl(envelope(HullParams(**_DESIGNS[design_id]["params"])), path, 0.3, 0.3)
+                export_stl(envelope(HullParams(**_DESIGNS[design_id]["params"])), path, 0.15, 0.1)
         except Exception as e:   # surface the real cause in the viewer, not a silent blank
             raise HTTPException(500, f"CAD preview failed: {e!r}")
     return FileResponse(path, media_type="model/stl")
