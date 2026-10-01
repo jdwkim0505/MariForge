@@ -7,6 +7,8 @@
 <p align="center"><strong>A physics-based RC boat design studio that outputs print-ready hulls.</strong><br>
 Give it a size box, a cruise speed and an endurance. It solves the coupled hydrostatics ↔ weight ↔ resistance ↔ propulsion problem, hands you five genuinely different hulls, renders them on the water in 3D, and exports CAD with the rudder tube, stuffing tube, motor mount, servo thwart and a gasketed magnet hatch already in the part.</p>
 
+<p align="center">Tell it what the boat has to carry and how rough the water is, and it also tells you <strong>where every payload goes, the biggest waves each hull can work in, what the parts cost</strong>, and hands you an <strong>ArduPilot</strong> parameter file to start from.</p>
+
 <p align="center">
   <code>Python 3.11+</code> · <code>FastAPI</code> · <code>CadQuery / OpenCASCADE</code> · <code>trimesh</code> · <code>three.js</code> · the maritime sibling of <a href="https://github.com/stekimboy/aeroforge">AeroForge</a>
 </p>
@@ -44,11 +46,42 @@ MariForge follows AeroForge's doctrine: every number on screen is the output of 
 
 The draft is solved, not chosen: the hull has to displace what it weighs, the battery depends on the power, the power on the resistance, the resistance on the hull. `design.py` iterates until they agree.
 
-Ballast beyond the 5 % trimming minimum is reported as the **payload allowance**: swap lead for cargo, a camera or sensors and the boat still floats at its lines.
+Ballast beyond the 5 % trimming minimum is reported as the **spare capacity**: swap lead for cargo and the boat still floats at its lines.
+
+### Payload first
+
+Pick what the boat has to carry from the catalogue (autopilot + GPS, telemetry radio, FPV or action camera, companion computer, echo sounder, water-quality pack, medical resupply pouch, mesh radio relay) or add your own item with its mass, size, power and mount. Each item is a real part of the solve:
+
+| Mount | Where it goes | What it changes |
+|---|---|---|
+| in the hull | packed on the cavity floor under the hatch, overflow into the forward cavity; the hatch grows (0.20 L to 0.75 L) when the payload needs it | mass, CG, ballast |
+| on the hatch lid | cameras and antennas, aft to forward | mass, and KG goes up, so GM is re-checked |
+| through-hull well | a flooded tube from the bottom skin to above the waterline, with a flat-bottom check for the transducer face | the well water is taken out of the displacement and LCB/KB, and its free surface (π r⁴ / 4 per well) comes off GM |
+
+Payload power is added to the battery sizing, so endurance stays honest. An item that will not fit is a failed check with its own name (`payload.<item>`), never a silent drop. The CAD builds the well (boss bonded to the skin, bore through it) and the verifier proves it is open to the water and that the cut envelope still displaces the net design volume.
+
+### Sea state
+
+Each hull reports the largest significant wave height it can work in and what limits it.
+
+| Piece | How |
+|---|---|
+| Heave and pitch, head seas at cruise | strip theory: Lewis-form added mass per section, waterplane restoring, Froude-Krylov excitation with the Smith depth correction, encounter frequency, damping 0.20 of critical at heave resonance (assumed, stiffness-proportional) |
+| Roll, beam seas at rest | single DOF, effective wave slope (averaged across the beam, attenuated to the centre of buoyancy), k_xx = 0.40 B + 20 % added inertia, damping 0.08 (assumed) |
+| Sea | Bretschneider spectrum, peak period from a steepness of 1/20 (fetch-limited chop on a lake or harbour) |
+| Limits | NORDFORSK 1987 general operability: roll RMS ≤ 6°, deck wetness ≤ 5 %, keel emergence ≤ 3 %, bow vertical acceleration RMS ≤ 0.275 g; plus water reaching the hatch coaming ≤ 1 % |
+
+Set **Must work in waves up to Hs** and it becomes a check (`seakeeping.wave_height`). These are linear estimates: good for ranking hulls and for the order of magnitude, not a tank test.
+
+### ArduPilot and the parts list
+
+**Download ArduPilot Rover parameters** gives a Mission Planner `.param` file for a boat frame: `FRAME_CLASS 2`, rudder and throttle outputs, `CRUISE_SPEED` from the design, `CRUISE_THROTTLE` from the cruise power against the motor's rating, turn radius, steering rate and accel/decel limits from the resistance and mass. They are starting values; run Learn Cruise and the Rover tuning steps afterwards.
+
+The **parts list** prices every bought part, the payload, PLA (with 10 % waste) and the lead ballast, and gives a print-time range. Prices are typical hobby retail estimates in USD, not quotes.
 
 ### Checks every design reports
 
-`ballast.positive`, `trim.level`, `stability.gm` (GM ≥ 4 % of beam), `stability.range` (GZ positive to ≥ 70°), `stability.downflooding` (≥ 35°), `speed.froude` (cruise Fn ≤ 0.40), `resistance.method_range`, `endurance`, `motor.headroom`, `box.height`, `box.beam`, and the hardware fits: `hatch.size`, `rudder_tube.above_waterline`, `stuffing_tube.inside`, `motor_mount.fits`, `servo_tray.fits`, `battery.fits`. The stability numbers are MariForge's own conservative choices for a free-running model, not a class rule.
+`ballast.positive`, `trim.level`, `stability.gm` (GM ≥ 4 % of beam), `stability.range` (GZ positive to ≥ 70°), `stability.downflooding` (≥ 35°), `seakeeping.wave_height` (when asked), `payload.<item>`, `speed.froude` (cruise Fn ≤ 0.40), `resistance.method_range`, `endurance`, `motor.headroom`, `box.height`, `box.beam`, and the hardware fits: `hatch.size`, `rudder_tube.above_waterline`, `stuffing_tube.inside`, `motor_mount.fits`, `servo_tray.fits`, `battery.fits`. The stability numbers are MariForge's own conservative choices for a free-running model, not a class rule.
 
 ---
 
@@ -114,7 +147,9 @@ Recorded, not hidden.
 - **Fixed-trim GZ.** Heeling does not re-trim the hull. It is the standard approximation; free-trim GZ is open.
 - **Model-scale friction.** The ITTC-57 line assumes turbulent flow; small hulls at low speed can run partly laminar, so resistance is likely over-predicted there. No correlation allowance is applied.
 - **Propulsive efficiency is assumed** (η_D = 0.45), not computed from a prop series.
-- **No sea-state limits yet.** Seakeeping (heave/pitch response) is the milestone after hull types.
+- **Seakeeping is linear and partly assumed.** Damping is a fixed fraction of critical, not a radiation solve; roll is uncoupled; the sea is a single steepness. NORDFORSK limits are full-scale criteria applied unchanged at model scale.
+- **Prices are estimates.** Typical hobby retail per part class, not live quotes; custom items are not priced.
+- **ArduPilot values are untested starting points.** They come from the design, not from a tuned boat.
 - **Not yet validated against a tank test or a floated print.** The first physical check is to print one, float it, and measure draft and roll period against the spec sheet.
 - **The print split is a plain butt joint.** Tongue-and-groove joints are open.
 

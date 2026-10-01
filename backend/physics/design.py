@@ -15,8 +15,9 @@ from . import components as C
 from .hullform import HullParams, deck_height, flare, half_breadth_wl, section_polygon
 from .hydrostatics import (clip_below, downflooding_angle, gz_curve, poly_area_centroid,
                            sample, submerged, waterplane)
-from .layout import build_layout, inner_floor_z
+from .layout import build_layout, expand_payloads, inner_floor_z
 from .resistance import RHO_FRESH, HullCoefficients, holtrop, hull_speed
+from .seakeeping import seakeeping
 from .weights import mass_budget, solve_ballast
 
 RHO_G_PER_MM3 = RHO_FRESH * 1e-6   # g/mm^3
@@ -68,7 +69,8 @@ def solve_design(req: dict, character: dict) -> dict:
     T = B / character["B_over_T"]
 
     motor, battery = C.MOTORS[0], C.BATTERIES[0]
-    notes: list[str] = []
+    payloads = expand_payloads(req.get("payloads") or [])
+    payload_w = sum(it["power_W"] for it in payloads)
     for _ in range(30):
         # deck may not exceed the box beam anywhere (flare widens the bow deck)
         p = HullParams(L=L, B=B, T=T, F=F, **shape)
@@ -77,15 +79,15 @@ def solve_design(req: dict, character: dict) -> dict:
             B *= Bbox / deck_max * 0.999
             continue
         hc, hy = hull_coefficients(p, n=61)
-        disp_g = hy["sub"].volume * RHO_G_PER_MM3
-        lay = build_layout(p, motor, battery, wall)
+        lay = build_layout(p, motor, battery, wall, payloads)
+        disp_g = (hy["sub"].volume - sum(w["water_mm3"] for w in lay["wells"])) * RHO_G_PER_MM3
         bud = mass_budget(p, lay, motor, battery)
         frac = (disp_g - bud["mass_g"]) / disp_g
         # power -> motor + battery
         r = holtrop(hc, V)
         p_elec = r["P_effective_W"] / (C.ETA_PROPULSIVE * motor["eta"])
         new_motor = _pick(C.MOTORS, "max_W", 3.0 * p_elec) or C.MOTORS[-1]
-        e_need = p_elec * endurance_min / 60 / C.BATTERY_USABLE
+        e_need = (p_elec + payload_w) * endurance_min / 60 / C.BATTERY_USABLE
         new_batt = _pick(C.BATTERIES, "Wh", e_need) or C.BATTERIES[-1]
         changed = False
         if new_motor is not motor or new_batt is not battery:
@@ -99,19 +101,34 @@ def solve_design(req: dict, character: dict) -> dict:
     p = HullParams(L=L, B=B, T=T, F=F, **shape)
     hc, hy = hull_coefficients(p)
     sb, wp = hy["sub"], hy["wp"]
-    disp_g = sb.volume * RHO_G_PER_MM3
-    lay = build_layout(p, motor, battery, wall)
+    lay = build_layout(p, motor, battery, wall, payloads)
+    # A flooded transducer well is open to the sea: the water in it is not
+    # buoyancy. Take it out of the volume and the centre of buoyancy, and
+    # charge its free surface (i = pi r^4 / 4 per well) against GM.
+    v_well = sum(w["water_mm3"] for w in lay["wells"])
+    vol = sb.volume - v_well
+    lcb = (sb.volume * sb.lcb - sum(w["water_mm3"] * w["x"] for w in lay["wells"])) / vol
+    kb = (sb.volume * sb.vcb - sum(w["water_mm3"] * w["z_keel"] / 2 for w in lay["wells"])) / vol
+    fs = sum(math.pi * (w["bore"] / 2) ** 4 / 4 for w in lay["wells"]) / vol
+    disp_g = vol * RHO_G_PER_MM3
     bud = mass_budget(p, lay, motor, battery)
     cx0, cx1 = lay["cavity_x_mm"]
-    bal = solve_ballast(bud, disp_g, sb.lcb, (cx0 + 20, cx1 - 20),
+    bal = solve_ballast(bud, disp_g, lcb, (cx0 + 20, cx1 - 20),
                         lambda x: inner_floor_z(p, x, wall))
     kg = bal["cg"][1]
-    bm = wp["I_T"] / sb.volume
-    gm = sb.vcb + bm - kg
+    bm = wp["I_T"] / vol
+    gm = kb + bm - kg - fs
 
     sec = sample(lambda x: section_polygon(p, x / p.L), 0.0, p.L, 81)
-    gz = gz_curve(sec, 0.0, p.L, sb.volume, kg, angles_deg=range(0, 91, 5),
+    # heeled: carry the well water as mass inside the hull envelope (it sits
+    # in the hull, so the envelope volume is what the water line must hold),
+    # then take its free surface off the arm
+    z_ww = (disp_g * kg + sum(w["water_mm3"] * w["z_keel"] / 2 for w in lay["wells"]) * RHO_G_PER_MM3) \
+        / (sb.volume * RHO_G_PER_MM3)
+    gz = gz_curve(sec, 0.0, p.L, sb.volume, z_ww, angles_deg=range(0, 91, 5),
                   z_bounds=(-3 * T, 3 * F))
+    for g in gz:
+        g["gz_mm"] -= fs * math.sin(math.radians(g["heel_deg"]))
     rng = 90.0
     for a, b in zip(gz, gz[1:]):
         if a["gz_mm"] > 0 and b["gz_mm"] <= 0:
@@ -123,13 +140,16 @@ def solve_design(req: dict, character: dict) -> dict:
 
     res = holtrop(hc, V)
     p_elec = res["P_effective_W"] / (C.ETA_PROPULSIVE * motor["eta"])
-    endurance = battery["Wh"] * C.BATTERY_USABLE / max(p_elec, 1e-6) * 60
+    endurance = battery["Wh"] * C.BATTERY_USABLE / max(p_elec + payload_w, 1e-6) * 60
     v_hull = hull_speed(hc.L)
     curve = [holtrop(hc, v) for v in [v_hull * k / 12 for k in range(1, 15)]]
 
     overall_h = max(-lay["prop"]["z_bottom"], -lay["rudder"]["z_tip"], T) \
         + hz["coaming_top_z"] + hz["lid_plate"]
     deck_max = max(2 * half_breadth_wl(p, k / 40) * (1 + flare(p, k / 40)) for k in range(41))
+
+    wave_mm = float(req.get("wave_height_mm") or 0.0)
+    sea = seakeeping(p, disp_g, bal["cg"][0], gm, kb, V, hz, wave_mm)
 
     checks = list(lay["checks"])
     ck = lambda n, ok, d: checks.append({"name": n, "ok": bool(ok), "detail": d})
@@ -155,6 +175,10 @@ def solve_design(req: dict, character: dict) -> dict:
     ck("box.height", overall_h <= Hbox,
        f"keel/prop/rudder to hatch lid {overall_h:.0f} mm (box {Hbox:.0f})")
     ck("box.beam", deck_max <= Bbox + 0.5, f"max deck beam {deck_max:.0f} mm (box {Bbox:.0f})")
+    if wave_mm > 0:
+        ck("seakeeping.wave_height", sea["max_hs_mm"] >= wave_mm,
+           f"works in waves up to Hs {sea['max_hs_mm']:.0f} mm (asked {wave_mm:.0f}), "
+           f"limited by {sea['limited_by_label']}")
 
     return {
         "id": uuid.uuid4().hex[:12],
@@ -165,8 +189,9 @@ def solve_design(req: dict, character: dict) -> dict:
         "params": p.to_dict(),
         "layout": lay,
         "hydrostatics": {
-            "displacement_g": disp_g, "volume_mm3": sb.volume,
-            "lcb_mm": sb.lcb, "kb_mm": sb.vcb, "bm_mm": bm, "kg_mm": kg, "gm_mm": gm,
+            "displacement_g": disp_g, "volume_mm3": vol, "hull_volume_mm3": sb.volume,
+            "well_water_mm3": v_well, "free_surface_mm": fs,
+            "lcb_mm": lcb, "kb_mm": kb, "bm_mm": bm, "kg_mm": kg, "gm_mm": gm,
             "lcg_mm": bal["cg"][0], "wetted_mm2": sb.wetted,
             "waterplane_mm2": wp["area"], "Cb": hc.Cb, "Cp": hc.Cp, "Cm": hc.Cm,
             "Cwp": hc.Cwp, "lcb_pct": hc.lcb_pct, "gz": gz,
@@ -181,7 +206,13 @@ def solve_design(req: dict, character: dict) -> dict:
                                       "fresh water 15 C, no turbulence stimulation"},
         "propulsion": {"motor": motor, "battery": battery, "prop_dia_mm": lay["prop"]["dia"],
                        "P_electric_W": p_elec, "eta_propulsive": C.ETA_PROPULSIVE,
-                       "endurance_min": endurance},
+                       "P_payload_W": payload_w, "endurance_min": endurance},
+        "payload": {"items": lay["payload"], "wells": lay["wells"],
+                    "mass_g": sum(it["mass_g"] for it in lay["payload"]),
+                    "power_W": payload_w,
+                    # what could still be added: ballast above the 5 % trimming floor
+                    "spare_capacity_g": max(0.0, bal["mass_g"] - BALLAST_MIN_FRAC * disp_g)},
+        "seakeeping": sea,
         "overall": {"length_mm": L, "beam_mm": deck_max, "height_mm": overall_h},
         "checks": checks,
         "feasible": all(c["ok"] for c in checks),

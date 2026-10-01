@@ -108,6 +108,15 @@ def mass_budget(p: HullParams, lay: dict, motor: dict, battery: dict) -> dict:
     items.append({"name": "magnets+gasket",
                   "mass_g": C.FIXED_PARTS["hatch_magnets"] + C.FIXED_PARTS["gasket"],
                   "cg": ((h["x0"] + h["x1"]) / 2, h["coaming_top_z"])})
+    for it in lay.get("payload", []):
+        items.append({"name": f"payload: {it['name']}", "mass_g": it["mass_g"], "cg": it["cg"],
+                      "payload": True})
+    for w in lay.get("wells", []):
+        rho = C.PLA_DENSITY
+        hgt = w["top_z"] - w["z_keel"]
+        items.append({"name": f"well boss ({w['key']})",
+                      "mass_g": math.pi / 4 * (w["od"] ** 2 - w["bore"] ** 2) * hgt * rho,
+                      "cg": (w["x"], w["z_keel"] + hgt / 2)})
     m = sum(i["mass_g"] for i in items)
     xg = sum(i["mass_g"] * i["cg"][0] for i in items) / m
     zg = sum(i["mass_g"] * i["cg"][1] for i in items) / m

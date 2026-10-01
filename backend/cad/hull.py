@@ -181,12 +181,25 @@ def build_hull(p: HullParams, lay: dict) -> tuple[cq.Shape, dict]:
                          tz - sv["thwart_t"] - 1, tz + 1))
     feature("servo_tray.fits", "SG90 servo thwart", servo)
 
+    # ---- flooded transducer wells ------------------------------------------------------
+    # a tube from the bottom skin up above the waterline: the sea comes in to
+    # z = 0 and no further, and the transducer sees water with no hull between
+    for w in lay.get("wells", []):
+        def well(w=w):
+            adds.append(_cyl_z(w["x"], 0, w["od"] / 2, w["z_keel"] - 2, w["top_z"]).intersect(cav))
+            cuts.append(well_bore(w))
+        feature(w["check"], "%.0f mm flooded well for %s" % (w["bore"], w["key"]), well)
+
     hull = env.cut(cav)
     if adds:
         hull = hull.fuse(*adds)
     if cuts:
         hull = hull.cut(*cuts)
     return hull.clean(), report
+
+
+def well_bore(w: dict) -> cq.Solid:
+    return _cyl_z(w["x"], 0, w["bore"] / 2, w["z_keel"] - 10, w["top_z"] + 1)
 
 
 def magnet_centres(lay: dict) -> list[tuple[float, float]]:

@@ -48,14 +48,23 @@ waterline at z = 0**. CAD and layout are in mm; resistance is SI.
 | `physics/hydrostatics.py` | section integration: volume, LCB/KB, waterplane, fixed-trim GZ, downflooding |
 | `physics/resistance.py` | ITTC-57 + Holtrop-Mennen (Fn <= 0.45) |
 | `physics/components.py` | motors, batteries, fixed parts, PLA, wall |
-| `physics/layout.py` | hatch, rudder, prop/shaft, motor mount, servo thwart, battery; named checks |
+| `physics/layout.py` | hatch, rudder, prop/shaft, motor mount, servo thwart, battery, payload packing and transducer wells; named checks |
 | `physics/weights.py` | mass budget, CG, ballast solve for level trim |
 | `physics/design.py` | the coupled solve for one hull + all checks |
 | `physics/variants.py` | the five characters and the gallery traits |
+| `physics/seakeeping.py` | heave/pitch strip theory, roll, Bretschneider, NORDFORSK limits, max Hs |
+| `physics/ardupilot.py` | Rover boat `.param` starting values from the design |
+| `physics/bom.py` | parts list with estimated prices and print time |
 | `cad/hull.py` | CadQuery lofts and features (one fuse, one cut) |
 | `cad/verify.py` | mesh hydrostatics + cut existence checks |
 | `cad/exporters.py` | STEP assembly, STL zip, split for the print bed |
 | `api.py` | FastAPI; one CAD worker thread, the viewed design jumps the queue |
+
+## Payload wells
+
+A through-hull well is open to the sea: `hydrostatics.volume_mm3` is NET of
+the well water and the verifier cuts the well bores out of the envelope before
+measuring it. Keep the two in step.
 
 ## Open items
 

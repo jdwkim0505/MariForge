@@ -7,6 +7,7 @@ fullness from a slack round bilge to a near-box tug section.
 from __future__ import annotations
 
 from ..jsonsafe import plain
+from .bom import bill_of_materials
 from .design import solve_design
 
 CHARACTERS = [
@@ -39,8 +40,8 @@ def _traits(designs: list[dict]) -> None:
     stab = col(lambda d: d["hydrostatics"]["gm_mm"] / d["params"]["B"])
     econ = col(lambda d: d["propulsion"]["endurance_min"])
     spd = col(lambda d: d["resistance"]["hull_speed_mps"])
-    load = col(lambda d: d["mass"]["ballast"]["mass_g"])
-    sea = col(lambda d: d["hydrostatics"]["downflooding_deg"])
+    load = col(lambda d: d["payload"]["spare_capacity_g"])
+    sea = col(lambda d: d["seakeeping"]["max_hs_mm"])
     for i, d in enumerate(designs):
         d["traits"] = {"stability": stab[i], "endurance": econ[i], "hull_speed": spd[i],
                        "payload": load[i], "seaworthiness": sea[i]}
@@ -48,5 +49,7 @@ def _traits(designs: list[dict]) -> None:
 
 def generate_variants(req: dict) -> list[dict]:
     designs = [plain(solve_design(req, ch)) for ch in CHARACTERS]
+    for d in designs:
+        d["bom"] = plain(bill_of_materials(d))
     _traits(designs)
     return designs

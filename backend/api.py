@@ -9,8 +9,10 @@ from concurrent.futures import Future
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 
+from .physics.ardupilot import rover_params
+from .physics.components import PAYLOADS
 from .physics.variants import CHARACTERS, MISSIONS, generate_variants
 from .schemas import GenerateRequest
 
@@ -97,7 +99,8 @@ def _schedule(design_id: str, urgent: bool = False) -> Future:
 def options():
     return {"hull_types": [{"key": "displacement_monohull", "label": "Displacement monohull"}],
             "missions": [{"key": k, **v} for k, v in MISSIONS.items()],
-            "characters": [{"key": c["key"], "label": c["label"], "blurb": c["blurb"]} for c in CHARACTERS]}
+            "characters": [{"key": c["key"], "label": c["label"], "blurb": c["blurb"]} for c in CHARACTERS],
+            "payloads": [{"key": k, **v} for k, v in PAYLOADS.items()]}
 
 
 @router.post("/generate")
@@ -125,6 +128,15 @@ def design(design_id: str):
     if design_id not in _DESIGNS:
         raise HTTPException(404)
     return _DESIGNS[design_id]
+
+
+@router.get("/export/{design_id}/ardupilot.param", response_class=PlainTextResponse)
+def ardupilot(design_id: str):
+    if design_id not in _DESIGNS:
+        raise HTTPException(404)
+    d = _DESIGNS[design_id]
+    return PlainTextResponse(rover_params(d)["text"], headers={
+        "Content-Disposition": f'attachment; filename="mariforge_{d["character"]}_{design_id}.param"'})
 
 
 @router.get("/cad/{design_id}/status")

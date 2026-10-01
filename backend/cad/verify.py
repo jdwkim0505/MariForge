@@ -21,7 +21,7 @@ from ..jsonsafe import plain
 from ..physics.components import PLA_DENSITY
 from ..physics.hullform import HullParams, canoe_depth
 from ..physics.resistance import RHO_FRESH
-from .hull import envelope, magnet_centres
+from .hull import envelope, magnet_centres, well_bore
 
 RHO_G_PER_MM3 = RHO_FRESH * 1e-6
 
@@ -98,6 +98,11 @@ def cut_checks(hull: cq.Shape, p: HullParams, lay: dict) -> list[dict]:
     add("servo_pocket.empty", _empty(hull, (sv["x"], 0, sv["z_top"] - sv["thwart_t"] / 2)))
     add("servo_thwart.solid",
         _solid(hull, (sv["x"], sv["pocket_y"] / 2 + 3, sv["z_top"] - sv["thwart_t"] / 2)))
+    for i, wl in enumerate(lay.get("wells", [])):
+        zk = wl["z_keel"]
+        add(f"well_{i}.open_to_water", _empty(hull, (wl["x"], 0, zk + w / 2)))
+        add(f"well_{i}.bore_above_waterline", _empty(hull, (wl["x"], 0, wl["top_z"] - 1)))
+        add(f"well_{i}.wall.solid", _solid(hull, (wl["x"] + wl["bore"] / 2 + 1.0, 0, wl["top_z"] - 3)))
     return out
 
 
@@ -105,14 +110,20 @@ def verify_design(design: dict, parts: dict) -> dict:
     p = HullParams(**design["params"])
     lay = design["layout"]
     hull = parts["hull"]
-    env_mesh = to_mesh(envelope(p))
+    env = envelope(p)
+    wells = lay.get("wells", [])
+    if wells:
+        # the design volume is net of the flooded wells: water inside them is sea
+        env = env.cut(*[well_bore(w) for w in wells])
+    env_mesh = to_mesh(env)
     hy = mesh_hydrostatics(env_mesh, design["mass"]["total_g"], design["hydrostatics"]["lcg_mm"])
     hull_mesh = to_mesh(hull, 0.1, 0.2)
     printed = {k: volume(parts[k]) * PLA_DENSITY for k in ("hull", "hatch_lid", "rudder")}
     phys_printed = sum(i["mass_g"] for i in design["mass"]["items"]
                        if i["name"] in ("hull_shell", "coaming", "magnet_pads", "hatch_lid",
                                         "deck_opening", "rudder_boss", "rudder_blade",
-                                        "stuffing_boss", "motor_mount", "servo_tray"))
+                                        "stuffing_boss", "motor_mount", "servo_tray")
+                       or i["name"].startswith("well boss"))
     return plain({
         "mesh_hydrostatics": hy,
         "design_volume_mm3": design["hydrostatics"]["volume_mm3"],

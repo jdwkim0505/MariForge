@@ -1,20 +1,29 @@
 """Full CAD builds: the exported geometry is the proof. Slow (~40 s per hull)."""
+import functools
+
 import pytest
 
 from backend.cad.exporters import split_for_bed
 from backend.cad.hull import build_parts
 from backend.cad.verify import verify_design, volume
 from backend.physics.variants import generate_variants
-from tests.conftest import DEFAULT_REQ
+from tests.conftest import DEFAULT_REQ, PAYLOAD_REQ
 
-_DESIGNS = generate_variants(DEFAULT_REQ)
+_DESIGNS = {d["character"]: d for d in generate_variants(DEFAULT_REQ)}
+# one hull carrying a payload, so the flooded transducer well is proven too
+_DESIGNS["cruiser_payload"] = next(d for d in generate_variants(PAYLOAD_REQ) if d["character"] == "cruiser")
 
 
-@pytest.fixture(scope="module", params=[d["character"] for d in _DESIGNS])
-def built(request):
-    d = next(x for x in _DESIGNS if x["character"] == request.param)
+@functools.cache
+def _build(key):
+    d = _DESIGNS[key]
     parts = build_parts(d)
     return d, parts, verify_design(d, parts)
+
+
+@pytest.fixture(scope="module", params=list(_DESIGNS))
+def built(request):
+    return _build(request.param)
 
 
 def test_hull_is_one_valid_watertight_solid(built):
@@ -63,3 +72,12 @@ def test_split_segments_fit_the_bed(built):
         assert len(s.Solids()) == 1, f"{name} falls apart into {len(s.Solids())} pieces"
         total += volume(s)
     assert total == pytest.approx(volume(parts["hull"]), rel=1e-3)
+
+
+def test_transducer_well_is_open_to_the_sea():
+    d, _, v = _build("cruiser_payload")
+    assert len(d["layout"]["wells"]) == 1
+    wells = [c for c in v["cuts"] if c["name"].startswith("well_")]
+    assert len(wells) == 3 and all(c["ok"] for c in wells)
+    # design volume is net of the well water, and the cut envelope agrees
+    assert abs(v["volume_error"]) < 0.005

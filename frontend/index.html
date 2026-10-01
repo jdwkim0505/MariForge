@@ -35,6 +35,25 @@
       <label>Cruise speed (m/s) <input id="cruise_speed_mps" type="number" value="0.9" step="0.05"></label>
       <label>Endurance (min) <input id="endurance_min" type="number" value="30"></label>
       <label>Print bed (mm) <input id="bed_mm" type="number" value="250"></label>
+      <label>Must work in waves up to Hs (mm, 0 = no requirement)
+        <input id="wave_height_mm" type="number" value="0" min="0" max="500"></label>
+      <fieldset id="payloads">
+        <legend>Payload</legend>
+        <div id="payload_list" class="muted">loading catalogue...</div>
+        <details id="custom">
+          <summary>Add your own item</summary>
+          <label>Name <input id="c_name" placeholder="e.g. LiDAR"></label>
+          <label>Mass (g) <input id="c_mass" type="number" value="200"></label>
+          <label>Size L x W x H (mm) <input id="c_dims" value="70 x 60 x 50"></label>
+          <label>Power (W) <input id="c_power" type="number" value="0"></label>
+          <label>Mount <select id="c_mount">
+            <option value="bay">in the hull, under the hatch</option>
+            <option value="deck">on the hatch lid</option>
+            <option value="through_hull">through-hull well (transducer)</option></select></label>
+          <button id="c_add" class="ghost" type="button">Add item</button>
+        </details>
+        <ul id="custom_list" class="plist"></ul>
+      </fieldset>
       <button id="go">Generate five hulls</button>
       <p id="msg" class="muted"></p>
     </aside>

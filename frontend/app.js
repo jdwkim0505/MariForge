@@ -67,6 +67,7 @@ async function show(d) {
   $("cad_state").textContent = "loading hull preview (the first one after startup can take a minute)...";
   try {
     boat.add(await loadStl(`/api/preview/${d.id}/envelope.stl`, MATS.envelope));
+    boat.add(payloadMeshes(d));
   } catch (e) {
     const r = await fetch(`/api/preview/${d.id}/envelope.stl`).catch(() => null);
     const why = r && !r.ok ? await r.text() : String(e);
@@ -91,6 +92,7 @@ async function watchCad(d) {
   if (current !== d) return;
   boat.clear();
   meshes.forEach((m) => boat.add(m));
+  boat.add(payloadMeshes(d));
   d.cad = s;
   const v = s.verification;
   const cutsOk = v.cuts.every((c) => c.ok);
@@ -114,6 +116,60 @@ function applyHeel() {
 }
 $("heel").oninput = applyHeel;
 $("show_wl").onchange = applyHeel;
+
+// ---- payload picker ---------------------------------------------------------
+const MOUNT = { bay: "in hull", deck: "on lid", through_hull: "through-hull well" };
+let customs = [];
+fetch("/api/options").then((r) => r.json()).then((o) => {
+  $("payload_list").className = "";
+  $("payload_list").innerHTML = o.payloads.map((p) =>
+    `<div class="prow"><input type="checkbox" id="pl_${p.key}">
+      <span>${p.name}<small>${fmt(p.mass_g)} g, ${p.power_W ? fmt(p.power_W, 1) + " W, " : ""}${MOUNT[p.mount]}</small></span>
+      <input type="number" id="plq_${p.key}" value="1" min="1" max="6" title="quantity"></div>`).join("");
+  $("payload_list").dataset.keys = o.payloads.map((p) => p.key).join(",");
+}).catch(() => ($("payload_list").textContent = "payload catalogue unavailable"));
+
+function drawCustoms() {
+  $("custom_list").innerHTML = customs.map((c, i) =>
+    `<li><span>${c.name}<small>${fmt(c.mass_g)} g, ${c.dims_mm.map((v) => fmt(v)).join(" x ")} mm, ${MOUNT[c.mount]}</small></span>
+      <button type="button" data-i="${i}" title="remove">✕</button></li>`).join("");
+  $("custom_list").querySelectorAll("button").forEach((b) => (b.onclick = () => { customs.splice(+b.dataset.i, 1); drawCustoms(); }));
+}
+$("c_add").onclick = () => {
+  const dims = $("c_dims").value.split(/[x×, ]+/).map(Number).filter((v) => v > 0);
+  if (dims.length !== 3) { $("msg").textContent = "Custom item size needs three numbers, L x W x H in mm."; return; }
+  customs.push({ key: "custom", name: $("c_name").value || "Custom payload", mass_g: Number($("c_mass").value),
+    dims_mm: dims, power_W: Number($("c_power").value) || 0, mount: $("c_mount").value });
+  drawCustoms();
+};
+
+function payloadRequest() {
+  const keys = ($("payload_list").dataset.keys || "").split(",").filter(Boolean);
+  const rows = keys.filter((k) => $("pl_" + k).checked).map((k) => ({ key: k, qty: Number($("plq_" + k).value) || 1 }));
+  return rows.concat(customs);
+}
+
+// payload boxes and wells, drawn in the boat frame so they heel with it
+const PL_MAT = new THREE.MeshStandardMaterial({ color: 0xe3b341, roughness: 0.6, transparent: true, opacity: 0.85 });
+const WELL_MAT = new THREE.MeshStandardMaterial({ color: 0x4cc38a, roughness: 0.6, transparent: true, opacity: 0.6 });
+function payloadMeshes(d) {
+  const g = new THREE.Group();
+  (d.layout.payload || []).forEach((it) => {
+    if (it.zone === "well") return;
+    const [lx, wy, hz] = it.size;
+    const m = new THREE.Mesh(new THREE.BoxGeometry(lx, wy, hz), PL_MAT);
+    m.position.set(it.x, it.y, it.z_bottom + hz / 2);
+    g.add(m);
+  });
+  (d.layout.wells || []).forEach((w) => {
+    const h = w.top_z - w.z_keel;
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(w.bore / 2, w.bore / 2, h, 32, 1, true), WELL_MAT);
+    m.rotation.x = Math.PI / 2;
+    m.position.set(w.x, 0, w.z_keel + h / 2);
+    g.add(m);
+  });
+  return g;
+}
 
 // ---- gallery + spec -------------------------------------------------------
 function gallery() {
@@ -150,7 +206,8 @@ function renderSpec(d) {
     ["Waterline beam / draft / freeboard", `${fmt(p.B)} / ${fmt(p.T)} / ${fmt(p.F)} mm`],
     ["Displacement", `${fmt(h.displacement_g)} g`],
     ["Printed parts", `${fmt(m.printed_shell_g)} g shell`],
-    ["Ballast / payload allowance", `${fmt(m.ballast.mass_g)} g at x = ${fmt(m.ballast.x ?? 0)} mm`],
+    ["Ballast", `${fmt(m.ballast.mass_g)} g at x = ${fmt(m.ballast.x ?? 0)} mm`],
+    ["Payload carried / spare capacity", `${fmt(d.payload.mass_g)} g / <b>${fmt(d.payload.spare_capacity_g)} g</b>`],
     ["Cb / Cp / Cm / Cwp", `${fmt(h.Cb, 2)} / ${fmt(h.Cp, 2)} / ${fmt(h.Cm, 2)} / ${fmt(h.Cwp, 2)}`],
     ["KB / BM / KG / GM", `${fmt(h.kb_mm, 1)} / ${fmt(h.bm_mm, 1)} / ${fmt(h.kg_mm, 1)} / <b>${fmt(h.gm_mm, 1)}</b> mm`],
     ["Downflooding angle", `${fmt(h.downflooding_deg)}°`],
@@ -158,12 +215,28 @@ function renderSpec(d) {
     ["Resistance at cruise", `${fmt(r.R_total_N, 3)} N (${fmt(100 * r.R_wave_N / r.R_total_N)} % wave)`],
     ["Hull speed (Fn 0.40)", `${fmt(d.resistance.hull_speed_mps, 2)} m/s`],
     ["Motor / battery", `${pr.motor.name} / ${pr.battery.name}`],
-    ["Electric power at cruise", `${fmt(pr.P_electric_W, 1)} W`],
+    ["Electric power at cruise", `${fmt(pr.P_electric_W, 1)} W${pr.P_payload_W ? ` + ${fmt(pr.P_payload_W, 1)} W payload` : ""}`],
     ["Endurance at cruise", `${fmt(pr.endurance_min)} min`],
     ["Prop diameter", `${fmt(pr.prop_dia_mm)} mm`],
   ];
   const gz = svgCurve(h.gz.map((g) => [g.heel_deg, g.gz_mm]), 300, 110, "heel (deg)", "GZ mm", h.downflooding_deg);
   const rc = svgCurve(d.resistance.curve.map((c) => [c.V_mps, c.R_total_N]), 300, 110, "speed (m/s)", "R N", r.V_mps);
+  const sk = d.seakeeping, np = sk.natural_periods_s;
+  const sea = `<div class="section">Sea state</div><table>
+      <tr><td>Works in waves up to</td><td><span class="big">Hs ${fmt(sk.max_hs_mm)} mm</span></td></tr>
+      <tr><td>Limited by</td><td>${sk.limited_by_label}</td></tr>
+      <tr><td>WMO sea state</td><td>${sk.wmo_code}, ${sk.wmo_name}</td></tr>
+      <tr><td>Natural periods heave / pitch / roll</td><td>${fmt(np.heave, 2)} / ${fmt(np.pitch, 2)} / ${fmt(np.roll, 2)} s</td></tr>
+    </table>${svgCurve(sk.rao_head_seas.map((r) => [r.lambda_over_L, r.heave]), 300, 110, "wavelength / L", "heave RAO")}
+    <p class="muted">${sk.assumptions}.</p>`;
+  const pl = d.payload.items.length ? `<div class="section">Payload</div><table>${d.payload.items.map((it) =>
+      `<tr><td>${it.name}</td><td>${fmt(it.mass_g)} g, ${it.zone}${it.zone === "well" ? "" : ` at x = ${fmt(it.x)}`}</td></tr>`).join("")}</table>` : "";
+  const bom = d.bom;
+  const bomTable = `<div class="section">Parts list (estimated ~$${fmt(bom.total_usd)})</div>
+    <details><summary>${bom.rows.length} lines; print ${fmt(bom.printed_g)} g of PLA in ${fmt(bom.print_hours[0])} to ${fmt(bom.print_hours[1])} h</summary>
+    <table class="bom">${bom.rows.map((r) => `<tr><td>${r.item}</td><td>${r.note}</td><td>${r.qty_unit ? fmt(r.qty, 2) + " " + r.qty_unit + ", " : r.qty !== 1 ? r.qty + " x, " : ""}${r.priced ? "$" + fmt(r.usd) : "n/a"}</td></tr>`).join("")}</table>
+    </details><p class="muted">${bom.note}</p>
+    <button id="dl_ap" class="ghost">Download ArduPilot Rover parameters</button>`;
   const checks = d.checks.map((c) => `<li><b class="${c.ok ? "ok" : "no"}">${c.ok ? "✓" : "✗"}</b> ${c.name}: ${c.detail}</li>`).join("");
   let cad = "";
   if (d.cad) {
@@ -183,8 +256,10 @@ function renderSpec(d) {
   $("spec_body").innerHTML = `<table>${rows.map(([a, b]) => `<tr><td>${a}</td><td>${b}</td></tr>`).join("")}</table>
     <div class="section">Righting arm (fixed trim)</div>${gz}
     <div class="section">Calm-water resistance</div>${rc}
-    <div class="section">Checks</div><ul class="checks">${checks}</ul>${cad}
+    ${sea}${pl}
+    <div class="section">Checks</div><ul class="checks">${checks}</ul>${bomTable}${cad}
     <p class="muted">${d.resistance.assumptions}; propulsive efficiency ${pr.eta_propulsive} assumed.</p>`;
+  $("dl_ap").onclick = () => (location.href = `/api/export/${d.id}/ardupilot.param`);
   if (d.cad) {
     $("dl_step").onclick = () => (location.href = `/api/export/${d.id}/step`);
     $("dl_stl").onclick = () => (location.href = `/api/export/${d.id}/stl`);
@@ -199,8 +274,8 @@ function select(d) {
 }
 
 $("go").onclick = async () => {
-  const ids = ["length_mm", "beam_mm", "height_mm", "cruise_speed_mps", "endurance_min", "bed_mm"];
-  const body = { hull_type: $("hull_type").value, mission: $("mission").value };
+  const ids = ["length_mm", "beam_mm", "height_mm", "cruise_speed_mps", "endurance_min", "bed_mm", "wave_height_mm"];
+  const body = { hull_type: $("hull_type").value, mission: $("mission").value, payloads: payloadRequest() };
   ids.forEach((k) => (body[k] = Number($(k).value)));
   $("go").disabled = true;
   $("msg").textContent = "solving five hulls...";
